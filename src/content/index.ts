@@ -236,25 +236,222 @@ function tryGenericEngines(input: HTMLElement, settings: AppSettings): string | 
   return null
 }
 
-// 填写输入框
-function fillInput(input: HTMLElement, value: string): void {
-  logDebug('Filling input', { value })
+// 模拟用户输入 - 使用多种策略确保兼容各种框架
+function simulateUserInput(input: HTMLElement, value: string): boolean {
+  // 先聚焦输入框
+  input.focus()
+  
+  // 策略1: 尝试使用 execCommand (模拟粘贴，最接近真实用户操作)
   if (input instanceof HTMLInputElement || input instanceof HTMLTextAreaElement) {
-    input.value = value
-  } else {
-    input.textContent = value
+    // 选中所有内容
+    input.select()
+    
+    // 尝试使用 execCommand 插入文本（模拟粘贴）
+    try {
+      // 先清空
+      if (document.execCommand('selectAll', false)) {
+        if (document.execCommand('insertText', false, value)) {
+          logDebug('Used execCommand insertText')
+          return true
+        }
+      }
+    } catch (e) {
+      logDebug('execCommand failed, trying other methods')
+    }
   }
   
-  // 触发各种事件以确保Vue/React等框架能够捕获到变化
-  input.dispatchEvent(new Event('input', { bubbles: true }))
+  // 策略2: 使用 native setter + InputEvent (React/Vue 兼容方案)
+  if (input instanceof HTMLInputElement) {
+    try {
+      const nativeInputValueSetter = Object.getOwnPropertyDescriptor(
+        window.HTMLInputElement.prototype,
+        'value'
+      )?.set
+      if (nativeInputValueSetter) {
+        nativeInputValueSetter.call(input, value)
+        // 创建带有 inputType 的 InputEvent，更接近真实输入
+        const inputEvent = new InputEvent('input', {
+          bubbles: true,
+          cancelable: true,
+          inputType: 'insertText',
+          data: value,
+        })
+        input.dispatchEvent(inputEvent)
+        logDebug('Used nativeInputValueSetter for HTMLInputElement')
+        return true
+      }
+    } catch (e) {
+      logDebug('nativeInputValueSetter failed for input', e)
+    }
+  }
+  
+  if (input instanceof HTMLTextAreaElement) {
+    try {
+      const nativeTextAreaValueSetter = Object.getOwnPropertyDescriptor(
+        window.HTMLTextAreaElement.prototype,
+        'value'
+      )?.set
+      if (nativeTextAreaValueSetter) {
+        nativeTextAreaValueSetter.call(input, value)
+        const inputEvent = new InputEvent('input', {
+          bubbles: true,
+          cancelable: true,
+          inputType: 'insertText',
+          data: value,
+        })
+        input.dispatchEvent(inputEvent)
+        logDebug('Used nativeTextAreaValueSetter for HTMLTextAreaElement')
+        return true
+      }
+    } catch (e) {
+      logDebug('nativeTextAreaValueSetter failed for textarea', e)
+    }
+  }
+  
+  // 策略3: contenteditable 元素
+  if (input.getAttribute('contenteditable') === 'true') {
+    // 选中所有内容
+    const selection = window.getSelection()
+    const range = document.createRange()
+    range.selectNodeContents(input)
+    selection?.removeAllRanges()
+    selection?.addRange(range)
+    
+    // 使用 execCommand
+    try {
+      if (document.execCommand('insertText', false, value)) {
+        logDebug('Used execCommand for contenteditable')
+        return true
+      }
+    } catch (e) {
+      // fallback: 直接设置 textContent
+      input.textContent = value
+      input.dispatchEvent(new InputEvent('input', { bubbles: true, data: value }))
+      return true
+    }
+  }
+  
+  return false
+}
+
+// 触发完整的事件序列，模拟真实用户交互
+function triggerFullEventSequence(input: HTMLElement, value: string): void {
+  // 模拟 focus
+  input.dispatchEvent(new FocusEvent('focus', { bubbles: true }))
+  input.dispatchEvent(new FocusEvent('focusin', { bubbles: true }))
+  
+  // 模拟键盘事件序列
+  for (const char of value) {
+    input.dispatchEvent(new KeyboardEvent('keydown', { 
+      bubbles: true, 
+      key: char,
+      code: `Key${char.toUpperCase()}`,
+    }))
+    input.dispatchEvent(new KeyboardEvent('keypress', { 
+      bubbles: true, 
+      key: char,
+    }))
+    input.dispatchEvent(new KeyboardEvent('keyup', { 
+      bubbles: true, 
+      key: char,
+    }))
+  }
+  
+  // 触发 input 和 change 事件
+  input.dispatchEvent(new InputEvent('input', {
+    bubbles: true,
+    cancelable: true,
+    inputType: 'insertText',
+    data: value,
+  }))
+  
   input.dispatchEvent(new Event('change', { bubbles: true }))
-  input.dispatchEvent(new KeyboardEvent('keyup', { bubbles: true }))
+  
+  // 模拟 blur (有些框架在 blur 时才更新状态)
+  setTimeout(() => {
+    input.dispatchEvent(new FocusEvent('blur', { bubbles: true }))
+    input.dispatchEvent(new FocusEvent('focusout', { bubbles: true }))
+  }, 50)
+}
+
+// 尝试直接调用 React/Vue 的事件处理器
+function tryReactVueDirectCall(input: HTMLElement, value: string): boolean {
+  // 查找 React 的内部属性
+  const inputAny = input as unknown as Record<string, unknown>
+  const reactPropsKey = Object.keys(input).find(
+    key => key.startsWith('__reactProps$') || key.startsWith('__reactEventHandlers$')
+  )
+  
+  if (reactPropsKey) {
+    try {
+      const reactProps = inputAny[reactPropsKey] as Record<string, unknown>
+      if (reactProps && typeof reactProps.onChange === 'function') {
+        // 设置值
+        if (input instanceof HTMLInputElement || input instanceof HTMLTextAreaElement) {
+          input.value = value
+        }
+        // 创建模拟事件对象
+        const syntheticEvent = {
+          target: input,
+          currentTarget: input,
+          type: 'change',
+          bubbles: true,
+          preventDefault: () => {},
+          stopPropagation: () => {},
+          nativeEvent: new Event('change'),
+        }
+        ;(reactProps.onChange as (e: unknown) => void)(syntheticEvent)
+        logDebug('Called React onChange directly')
+        return true
+      }
+    } catch (e) {
+      logDebug('React direct call failed', e)
+    }
+  }
+  
+  // 查找 Vue 的 __vue__ 实例
+  const vueKey = Object.keys(input).find(key => key.startsWith('__vue'))
+  if (vueKey) {
+    logDebug('Vue instance found, using standard events')
+  }
+  
+  return false
+}
+
+// 填写输入框 - 综合使用多种策略
+function fillInput(input: HTMLElement, value: string): void {
+  logDebug('Filling input', { value, tagName: input.tagName, className: input.className })
+  
+  // 方法1: 模拟真实用户输入
+  let success = simulateUserInput(input, value)
+  
+  // 方法2: 如果模拟输入失败，尝试直接调用框架的事件处理器
+  if (!success) {
+    success = tryReactVueDirectCall(input, value)
+  }
+  
+  // 方法3: 降级到直接设置值 + 事件触发
+  if (!success) {
+    if (input instanceof HTMLInputElement || input instanceof HTMLTextAreaElement) {
+      input.value = value
+    } else {
+      input.textContent = value
+    }
+    triggerFullEventSequence(input, value)
+    logDebug('Used fallback method')
+  }
+  
+  // 额外触发事件序列确保框架检测到变化
+  triggerFullEventSequence(input, value)
   
   // 添加视觉反馈
   const originalBorder = input.style.border
+  const originalOutline = input.style.outline
   input.style.border = '2px solid #4CAF50'
+  input.style.outline = 'none'
   setTimeout(() => {
     input.style.border = originalBorder
+    input.style.outline = originalOutline
   }, 1000)
 
   console.log(`[Auto Confirm Helper] 已填写: ${value}`)
@@ -290,6 +487,7 @@ async function scanAndFill(): Promise<void> {
       if (value) {
         fillInput(input, value)
         logDebug('Template filled', { template: template.name })
+        cancelRetry() // 成功后取消重试
         return
       }
       // 模板填充值为空时，尝试通用引擎
@@ -297,21 +495,22 @@ async function scanAndFill(): Promise<void> {
       if (genericValue) {
         fillInput(input, genericValue)
         logDebug('Generic engine used for template', { template: template.name })
+        cancelRetry() // 成功后取消重试
         return
       }
     }
   }
 
-  // 如果没有模板匹配，尝试通用引擎
-  const inputs = document.querySelectorAll(
-    'input[type="text"], input:not([type]), input[type="search"], textarea, [contenteditable="true"]'
-  )
-  for (const input of inputs) {
-    const inputEl = input as HTMLElement
+  // 如果没有模板匹配，尝试通用引擎 - 使用增强的输入框查找
+  const inputs = findAllInputs()
+  logDebug('Found inputs for generic engine', { count: inputs.length })
+  
+  for (const inputEl of inputs) {
     const genericValue = tryGenericEngines(inputEl, settings)
     if (genericValue) {
       fillInput(inputEl, genericValue)
       logDebug('Generic engine auto matched')
+      cancelRetry() // 成功后取消重试
       return
     }
   }
@@ -320,37 +519,236 @@ async function scanAndFill(): Promise<void> {
 }
 
 let retryTimer: number | null = null
+let retryCount = 0
+const MAX_RETRIES = 10
+
 function scheduleRetry(): void {
   if (retryTimer) return
-  let count = 0
+  retryCount = 0
   retryTimer = window.setInterval(() => {
-    count += 1
+    retryCount += 1
     scanAndFill()
-    if (count >= 5 && retryTimer) {
+    if (retryCount >= MAX_RETRIES && retryTimer) {
       clearInterval(retryTimer)
       retryTimer = null
+      retryCount = 0
     }
-  }, 400)
+  }, 500)
 }
 
-// 使用MutationObserver监听DOM变化
-function observeDOM(): void {
-  const observer = new MutationObserver((mutations) => {
-    // 检测是否有新的对话框出现
-    for (const mutation of mutations) {
-      if (mutation.addedNodes.length > 0) {
-        // 延迟执行，等待DOM完全渲染
-        setTimeout(scanAndFill, 300)
-        scheduleRetry()
-        break
+function cancelRetry(): void {
+  if (retryTimer) {
+    clearInterval(retryTimer)
+    retryTimer = null
+    retryCount = 0
+  }
+}
+
+// 防抖函数
+function debounce<T extends (...args: unknown[]) => unknown>(fn: T, delay: number): (...args: Parameters<T>) => void {
+  let timer: number | null = null
+  return (...args: Parameters<T>) => {
+    if (timer) clearTimeout(timer)
+    timer = window.setTimeout(() => {
+      fn(...args)
+      timer = null
+    }, delay)
+  }
+}
+
+// 检测是否是对话框/弹窗元素
+function isDialogElement(element: Element): boolean {
+  const dialogSelectors = [
+    '[role="dialog"]',
+    '[role="alertdialog"]',
+    '[aria-modal="true"]',
+    '.dialog',
+    '.modal',
+    '.popup',
+    '.overlay',
+    // Ant Design
+    '.ant-modal',
+    '.ant-drawer',
+    '.ant-popconfirm',
+    // Element UI / Element Plus
+    '.el-dialog',
+    '.el-drawer',
+    '.el-message-box',
+    '.el-popconfirm',
+    // iView / View UI
+    '.ivu-modal',
+    '.ivu-drawer',
+    // Arco Design
+    '.arco-modal',
+    '.arco-drawer',
+    // TDesign
+    '.t-dialog',
+    '.t-drawer',
+    '.t-popup',
+    // 腾讯云控制台特定
+    '.tc-dialog',
+    '.tea-dialog',
+    '.tea-modal',
+    '.cds-modal',
+    '.confirm-dialog',
+    '[class*="dialog"]',
+    '[class*="modal"]',
+    '[class*="Dialog"]',
+    '[class*="Modal"]',
+  ]
+  
+  return dialogSelectors.some(selector => {
+    try {
+      return element.matches(selector) || element.querySelector(selector) !== null
+    } catch {
+      return false
+    }
+  })
+}
+
+// 检测 Shadow DOM
+function queryShadowRoot(root: Element | ShadowRoot, selector: string): Element[] {
+  const results: Element[] = []
+  
+  try {
+    results.push(...Array.from(root.querySelectorAll(selector)))
+  } catch {
+    // ignore
+  }
+  
+  // 递归查找 Shadow DOM
+  const allElements = root.querySelectorAll('*')
+  for (const el of allElements) {
+    if (el.shadowRoot) {
+      results.push(...queryShadowRoot(el.shadowRoot, selector))
+    }
+  }
+  
+  return results
+}
+
+// 增强的输入框查找 - 支持 Shadow DOM 和更多选择器
+function findAllInputs(): HTMLElement[] {
+  const selectors = [
+    'input[type="text"]',
+    'input:not([type])',
+    'input[type="search"]',
+    'textarea',
+    '[contenteditable="true"]',
+    '[contenteditable=""]',
+    // 一些自定义输入组件
+    '[role="textbox"]',
+    '[class*="input"]',
+    '[class*="Input"]',
+  ]
+  
+  const allInputs: HTMLElement[] = []
+  const seen = new WeakSet<Element>()
+  
+  for (const selector of selectors) {
+    try {
+      // 普通 DOM
+      const elements = document.querySelectorAll(selector)
+      for (const el of elements) {
+        if (!seen.has(el) && el instanceof HTMLElement) {
+          seen.add(el)
+          allInputs.push(el)
+        }
       }
+      
+      // Shadow DOM
+      const shadowElements = queryShadowRoot(document.body, selector)
+      for (const el of shadowElements) {
+        if (!seen.has(el) && el instanceof HTMLElement) {
+          seen.add(el)
+          allInputs.push(el)
+        }
+      }
+    } catch {
+      // ignore invalid selectors
+    }
+  }
+  
+  // 过滤掉不可见和不可编辑的元素
+  return allInputs.filter(input => {
+    const style = window.getComputedStyle(input)
+    const isVisible = style.display !== 'none' && 
+                      style.visibility !== 'hidden' && 
+                      style.opacity !== '0' &&
+                      input.offsetParent !== null
+    
+    // 检查是否是真正的输入元素
+    const isRealInput = input instanceof HTMLInputElement || 
+                        input instanceof HTMLTextAreaElement ||
+                        input.getAttribute('contenteditable') === 'true' ||
+                        input.getAttribute('contenteditable') === '' ||
+                        input.getAttribute('role') === 'textbox'
+    
+    return isVisible && isRealInput
+  })
+}
+
+// 使用MutationObserver监听DOM变化 - 增强版
+function observeDOM(): void {
+  const debouncedScan = debounce(() => {
+    scanAndFill()
+    scheduleRetry()
+  }, 200)
+  
+  const observer = new MutationObserver((mutations) => {
+    let shouldScan = false
+    
+    for (const mutation of mutations) {
+      // 检测新增节点
+      if (mutation.addedNodes.length > 0) {
+        for (const node of mutation.addedNodes) {
+          if (node instanceof Element) {
+            // 检测是否是对话框或包含输入框
+            if (isDialogElement(node) || 
+                node.querySelector('input, textarea, [contenteditable]') ||
+                node.matches?.('input, textarea, [contenteditable]')) {
+              shouldScan = true
+              break
+            }
+          }
+        }
+      }
+      
+      // 检测属性变化（有些框架通过 display/visibility 控制弹窗）
+      if (mutation.type === 'attributes') {
+        const target = mutation.target as Element
+        if (mutation.attributeName === 'style' || 
+            mutation.attributeName === 'class' ||
+            mutation.attributeName === 'aria-hidden' ||
+            mutation.attributeName === 'hidden') {
+          if (isDialogElement(target)) {
+            shouldScan = true
+          }
+        }
+      }
+      
+      if (shouldScan) break
+    }
+    
+    if (shouldScan) {
+      // 延迟执行，等待 DOM 完全渲染
+      setTimeout(() => debouncedScan(), 100)
     }
   })
 
   observer.observe(document.body, {
     childList: true,
     subtree: true,
+    attributes: true,
+    attributeFilter: ['style', 'class', 'aria-hidden', 'hidden'],
   })
+  
+  // 额外监听 document，处理 body 外的弹窗
+  observer.observe(document.documentElement, {
+    childList: true,
+  })
+  
+  logDebug('DOM observer started with enhanced detection')
 }
 
 // 监听来自popup的消息
