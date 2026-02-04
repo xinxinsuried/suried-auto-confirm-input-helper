@@ -1,0 +1,141 @@
+name: Build and Release Chrome Extension
+
+on:
+  push:
+    branches:
+      - main
+      - master
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v2
+        with:
+          version: 8
+
+      - name: Get pnpm store directory
+        shell: bash
+        run: |
+          echo "STORE_PATH=$(pnpm store path --silent)" >> $GITHUB_ENV
+
+      - name: Setup pnpm cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.STORE_PATH }}
+          key: ${{ runner.os }}-pnpm-store-${{ hashFiles('**/pnpm-lock.yaml') }}
+          restore-keys: |
+            ${{ runner.os }}-pnpm-store-
+
+      - name: Install dependencies
+        run: pnpm install
+
+      - name: Generate icons (if not exists)
+        run: |
+          if [ ! -f public/icons/icon16.png ]; then
+            echo "Generating icons..."
+            # Create base64 encoded PNG icons
+            echo 'iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAAmElEQVQ4T2NkIBEwkqgehtA0sMTc6f//M1gDcQNQAwcDA8MFoIYCRgaGF0ANbYwMDHeAGpoYGBheADW0MjEy3ARqbGBgYPgO1NjKyMBwG6ixkYGB4RdQYwsjA8NdoMZGBgYGJqDGFkYGhvtAjY0MDAzMQI0tjAwMD4EaGxgYGFiAGluYGBkeAzU2MDAwhDEyMDwBapzKCAIALwknERl3HCAAAAAASUVORK5CYII=' | base64 -d > public/icons/icon16.png
+            echo 'iVBORw0KGgoAAAANSUhEUgAAADAAAAAwCAYAAABXAvmHAAAACXBIWXMAAAsTAAALEwEAmpwYAAABpElEQVR4nO2YzU7CQBSF+266cKHxFdz5CvoEvoeugYWJ8RFYu9NHcOVSdQdxoUsXhiomGieZZMi0UCi09R6bfMlkOj/33DIzHQAwNTU1NTU1/Y0wANQAbAEoA7gFsGCW3RmrMwCPADYB1F3C5wBsAngAcGI76kRAPoCKy1kGYN8m/IGb0DMAjy7hF7oIngGYsgm/4Sb0mJvwq17IHANYtgl/6RLeB7AHoNb2Pui2vLkEYNllLwagCGAZwIRprqhXh4DeAJwBOANwCqDY8Hrt1MYrjF8AWAW4SsRdZ2AnGEC+nRJJAFxMENn/HMAGgCMAVQDlYcI7IQ1g0oHWABQGDbAMYBXAgc/h39VeE+c2AXYB7PoJP9B3PYdzADYA7AD4FHw7YNICsOh3eK9k0wTYAbADoNIh/IRp7tQm/AqACwDnXsJ3S3o1n8sA1gEsAnhwCW/Y8C0AqyHXrJvaWHU5h2x+x+fwXbUX08B2BNgBsGsLv+ASvuEn/KC6ia0AsA3g0Cd8r8K7JZ3a0HQK4JZLeMfCdys8MQCu+iC9dg1N7e1fAOBqal8AR9bwdgAAAABJRU5ErkJggg==' | base64 -d > public/icons/icon48.png
+            echo 'iVBORw0KGgoAAAANSUhEUgAAAIAAAACACAYAAADDPmHLAAAACXBIWXMAAAsTAAALEwEAmpwYAAAC90lEQVR4nO3czY7TMBSH8fcAC7qELW/AHl4BeCew5QVgOywBseEV2LJjw44NGyQQIBYgPgZJNVRV1NixHdvnJ0WaaTLTcf6N7TimlAAAAAAAAAAAAAAAAAAAAEimJOmGpFuSLkm6Kem8b3IHwJ8k3ZB0XdI1SVdtYz8G/0vSdUlXJF2UdF7Sg4OC4F9Juibpiqxg//lBQfAfSddlBfvXBgXBvyTpuqwgf92gIPiXpOuygvxrgaD4p6TrsoL85wYFwT8l6bqsYP/6QUHwD0m6ISvYvzYoCP6hZ4P9KwYFwd8k3dSzYP/qoCBYS7ohK9i/elAQrCRdlxXsXxkUBCtJumkN+1cOCoIVpBuyIv8VW0HwF0m6bov8l/cLgr+on/BfspH/crcg+IskXbOF/EsbBcEfJV2ThfxLewXB/yTpuoX8S3sFwZ8k6aYN5F/cKwh+L0nXLOS/uFcQvCbppi3kv7BXELwq6YYt5D/fKwhelqTrFvKfHxQEl4P/um3kP98rCD6Q9LOF/OcGBcEbkm5bwn9mryB4TdJNW8h/plcQvCLptoX8p3sFwYuSbthC/lNbBcHLkm7ZQv5TvYLgBUm3bSH/qUFBcEnSHVvIf7JXEDwv6baN5D85KAiel3THFvKf6BUEz0u6bSP5T/QKguclXbeR/Ed7BcHzkm7bSP6jvYLgWUm3bST/0UFB8Kyk27aQ/0ivIDgr6Y4t5D8yKAjOygry/79XEJyRdMcW8h/uFQRnJF2xhfyHBwXBGUnXbCH/4UFBcEbSbQv5D/UKgjOSbthC/kODguC0pDu2kP9gryA4LemOLeQ/0CsITku6aSP59/cKgtOS7thI/v2DguCUpDu2kH9/ryA4JemmjeTf3ysITkm6YyP59/YKglOS7lrIv7dXEJySdMdC/r17BcEpSXdsJP+eXkFwUtIdG8m/p1cQnJR0x0by7+4VBCclXbeR/Lt7BcEJSXdtIf/OvYLghKTrNpJ/516B+g+S7l8O/h29guCEpLu2kP9gryA4IemujeTf2SsIAAAAAAAAAADQlv8BsB5LxnN0cOIAAAAASUVORK5CYII=' | base64 -d > public/icons/icon128.png
+          fi
+
+      - name: Bump version
+        id: version
+        run: |
+          # Get current version from package.json
+          CURRENT_VERSION=$(node -p "require('./package.json').version")
+          echo "Current version: $CURRENT_VERSION"
+          
+          # Split version into parts
+          IFS='.' read -ra VERSION_PARTS <<< "$CURRENT_VERSION"
+          MAJOR=${VERSION_PARTS[0]}
+          MINOR=${VERSION_PARTS[1]}
+          PATCH=${VERSION_PARTS[2]}
+          
+          # Increment patch version
+          NEW_PATCH=$((PATCH + 1))
+          NEW_VERSION="${MAJOR}.${MINOR}.${NEW_PATCH}"
+          echo "New version: $NEW_VERSION"
+          
+          # Update package.json
+          node -e "
+            const fs = require('fs');
+            const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
+            pkg.version = '${NEW_VERSION}';
+            fs.writeFileSync('package.json', JSON.stringify(pkg, null, 2) + '\n');
+          "
+          
+          # Update manifest.json
+          node -e "
+            const fs = require('fs');
+            const manifest = JSON.parse(fs.readFileSync('manifest.json', 'utf8'));
+            manifest.version = '${NEW_VERSION}';
+            fs.writeFileSync('manifest.json', JSON.stringify(manifest, null, 2) + '\n');
+          "
+          
+          echo "version=${NEW_VERSION}" >> $GITHUB_OUTPUT
+
+      - name: Build extension
+        run: pnpm run build
+
+      - name: Create ZIP package
+        run: |
+          cd dist
+          zip -r ../auto-confirm-helper-v${{ steps.version.outputs.version }}.zip .
+
+      - name: Commit version bump
+        run: |
+          git config --local user.email "github-actions[bot]@users.noreply.github.com"
+          git config --local user.name "github-actions[bot]"
+          git add package.json manifest.json
+          git commit -m "chore: bump version to ${{ steps.version.outputs.version }}" || echo "No changes to commit"
+          git push
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: v${{ steps.version.outputs.version }}
+          name: Release v${{ steps.version.outputs.version }}
+          body: |
+            ## Auto Confirm Input Helper v${{ steps.version.outputs.version }}
+            
+            ### 功能
+            - 🔧 自动填写确认输入框
+            - 📋 支持自定义模板
+            - 🎨 简洁的管理界面
+            
+            ### 安装方法
+            1. 下载 `auto-confirm-helper-v${{ steps.version.outputs.version }}.zip`
+            2. 解压到任意文件夹
+            3. 打开 Chrome，进入 `chrome://extensions/`
+            4. 开启「开发者模式」
+            5. 点击「加载已解压的扩展程序」
+            6. 选择解压后的文件夹
+          files: |
+            auto-confirm-helper-v${{ steps.version.outputs.version }}.zip
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: chrome-extension-v${{ steps.version.outputs.version }}
+          path: dist/
