@@ -99,6 +99,9 @@ export const defaultTemplates: TemplateRule[] = [
 export const STORAGE_KEY = 'auto_confirm_templates'
 export const SETTINGS_KEY = 'auto_confirm_settings'
 
+// 写死的 Releases 地址
+export const RELEASES_URL = 'https://github.com/xinxinsuried/suried-auto-confirm-input-helper/releases'
+
 export const defaultSettings: AppSettings = {
   genericEngines: {
     placeholder: true,
@@ -107,6 +110,6 @@ export const defaultSettings: AppSettings = {
     dialogPattern: true,
   },
   update: {
-    releasesUrl: '',
+    releasesUrl: RELEASES_URL,
   },
 }

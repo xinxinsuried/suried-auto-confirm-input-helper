@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, onMounted, computed } from 'vue'
 import type { AppSettings, TemplateRule } from '@/types/template'
-import { defaultSettings } from '@/types/template'
+import { defaultSettings, RELEASES_URL } from '@/types/template'
 import {
   getTemplates,
   addTemplate,
@@ -20,6 +20,11 @@ const activeTab = ref<'list' | 'add' | 'settings'>('list')
 const settings = ref<AppSettings>(defaultSettings)
 const version = chrome.runtime.getManifest().version
 const contentStatus = ref<'unknown' | 'ok' | 'missing'>('unknown')
+
+// 更新检查状态
+const updateStatus = ref<'idle' | 'checking' | 'available' | 'latest' | 'error'>('idle')
+const latestVersion = ref<string>('')
+const downloadUrl = ref<string>('')
 
 // 新模板表单
 const newTemplate = ref({
@@ -139,7 +144,10 @@ async function triggerFill() {
 
 onMounted(() => {
   loadTemplates()
-  loadSettings()
+  loadSettings().then(() => {
+    // 打开时自动检查更新
+    checkForUpdates()
+  })
   checkContentStatus()
 })
 
@@ -147,13 +155,83 @@ async function handleSettingsChange() {
   await saveSettings(settings.value)
 }
 
-async function openReleases() {
-  const url = settings.value.update.releasesUrl
-  if (!url) {
-    alert('请先在设置中填写更新地址（仓库 Releases 地址）')
-    return
+// 比较版本号 (返回: 1 = a > b, -1 = a < b, 0 = a == b)
+function compareVersions(a: string, b: string): number {
+  const partsA = a.replace(/^v/, '').split('.').map(Number)
+  const partsB = b.replace(/^v/, '').split('.').map(Number)
+  
+  for (let i = 0; i < Math.max(partsA.length, partsB.length); i++) {
+    const numA = partsA[i] || 0
+    const numB = partsB[i] || 0
+    if (numA > numB) return 1
+    if (numA < numB) return -1
   }
-  chrome.tabs.create({ url })
+  return 0
+}
+
+// 从 GitHub Releases URL 提取 API URL
+function getGitHubApiUrl(releasesUrl: string): string | null {
+  // 支持格式: https://github.com/user/repo/releases
+  const match = releasesUrl.match(/github\.com\/([^/]+)\/([^/]+)/)
+  if (match) {
+    return `https://api.github.com/repos/${match[1]}/${match[2]}/releases/latest`
+  }
+  return null
+}
+
+// 检查更新
+async function checkForUpdates() {
+  updateStatus.value = 'checking'
+  
+  try {
+    const apiUrl = getGitHubApiUrl(RELEASES_URL)
+    if (!apiUrl) {
+      updateStatus.value = 'error'
+      return
+    }
+
+    const response = await fetch(apiUrl, {
+      headers: {
+        'Accept': 'application/vnd.github.v3+json',
+      },
+    })
+
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}`)
+    }
+
+    const release = await response.json()
+    const remoteVersion = release.tag_name || release.name || ''
+    latestVersion.value = remoteVersion.replace(/^v/, '')
+    
+    // 查找下载链接 (.zip 或 .crx)
+    const assets = release.assets || []
+    const zipAsset = assets.find((a: { name: string }) => 
+      a.name.endsWith('.zip') || a.name.endsWith('.crx')
+    )
+    downloadUrl.value = zipAsset?.browser_download_url || release.html_url || RELEASES_URL
+
+    // 比较版本
+    if (compareVersions(latestVersion.value, version) > 0) {
+      updateStatus.value = 'available'
+    } else {
+      updateStatus.value = 'latest'
+    }
+  } catch (error) {
+    console.error('检查更新失败:', error)
+    updateStatus.value = 'error'
+  }
+}
+
+// 下载更新
+function downloadUpdate() {
+  if (downloadUrl.value) {
+    chrome.tabs.create({ url: downloadUrl.value })
+  }
+}
+
+async function openReleases() {
+  chrome.tabs.create({ url: RELEASES_URL })
 }
 
 async function openExtensionsPage() {
@@ -215,6 +293,16 @@ const statusClass = computed(() => {
         </div>
       </div>
       <div class="header-right">
+        <!-- 更新通知 -->
+        <button 
+          v-if="updateStatus === 'available'" 
+          class="update-notify"
+          @click="downloadUpdate"
+          title="发现新版本，点击下载"
+        >
+          <span class="notify-badge">NEW</span>
+          <span class="notify-text">v{{ latestVersion }}</span>
+        </button>
         <span :class="['status-dot', statusClass]">{{ statusIcon }}</span>
         <button class="trigger-btn" @click="triggerFill" title="立即触发">
           <span class="btn-icon">▶</span>
@@ -517,30 +605,48 @@ const statusClass = computed(() => {
         <div class="settings-section">
           <div class="section-header">
             <span class="section-icon">◈</span>
-            <span class="section-title">更新配置</span>
+            <span class="section-title">版本更新</span>
           </div>
 
-          <div class="cyber-field">
-            <label class="field-label">
-              <span class="label-text">RELEASES_URL</span>
-            </label>
-            <input 
-              v-model="settings.update.releasesUrl"
-              type="url" 
-              class="cyber-input mono"
-              placeholder="https://github.com/user/repo/releases"
-              @change="handleSettingsChange"
-            />
+          <!-- 更新状态显示 -->
+          <div class="update-status-box" v-if="updateStatus !== 'idle'">
+            <div class="update-status-content">
+              <span v-if="updateStatus === 'checking'" class="update-checking">
+                <span class="spin-icon">⟳</span> 正在检查更新...
+              </span>
+              <span v-else-if="updateStatus === 'latest'" class="update-latest">
+                ✓ 已是最新版本 (v{{ version }})
+              </span>
+              <span v-else-if="updateStatus === 'available'" class="update-available">
+                <span class="new-badge">NEW</span>
+                发现新版本: v{{ latestVersion }}
+              </span>
+              <span v-else-if="updateStatus === 'error'" class="update-error">
+                ✗ 检查更新失败
+              </span>
+            </div>
+            <button 
+              v-if="updateStatus === 'available'" 
+              class="cyber-btn primary small"
+              @click="downloadUpdate"
+            >
+              <span class="btn-icon">↓</span>
+              <span>下载更新</span>
+            </button>
           </div>
 
           <div class="button-row">
-            <button class="cyber-btn primary" @click="openReleases">
-              <span class="btn-icon">↓</span>
+            <button class="cyber-btn primary" @click="checkForUpdates" :disabled="updateStatus === 'checking'">
+              <span class="btn-icon">⟳</span>
               <span>检查更新</span>
+            </button>
+            <button class="cyber-btn secondary" @click="openReleases">
+              <span class="btn-icon">↗</span>
+              <span>Releases</span>
             </button>
             <button class="cyber-btn secondary" @click="openExtensionsPage">
               <span class="btn-icon">⚙</span>
-              <span>扩展管理</span>
+              <span>扩展</span>
             </button>
           </div>
         </div>
@@ -816,6 +922,57 @@ body {
   display: flex;
   align-items: center;
   gap: var(--space-md);
+}
+
+/* 更新通知按钮 */
+.update-notify {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 10px;
+  background: rgba(255, 0, 255, 0.1);
+  border: 1px solid var(--neon-pink);
+  border-radius: 2px;
+  cursor: pointer;
+  animation: notifyPulse 2s ease-in-out infinite;
+  transition: all 0.2s ease;
+}
+
+.update-notify:hover {
+  background: var(--neon-pink);
+  box-shadow: var(--glow-pink);
+}
+
+.update-notify:hover .notify-badge,
+.update-notify:hover .notify-text {
+  color: var(--bg-deep);
+}
+
+@keyframes notifyPulse {
+  0%, 100% { 
+    border-color: var(--neon-pink);
+    box-shadow: 0 0 5px rgba(255, 0, 255, 0.3);
+  }
+  50% { 
+    border-color: var(--neon-cyan);
+    box-shadow: 0 0 15px rgba(255, 0, 255, 0.6);
+  }
+}
+
+.notify-badge {
+  padding: 1px 4px;
+  background: var(--neon-pink);
+  color: var(--bg-deep);
+  font-size: 8px;
+  font-weight: 700;
+  border-radius: 2px;
+  letter-spacing: 0.5px;
+}
+
+.notify-text {
+  font-size: 10px;
+  color: var(--neon-pink);
+  font-family: 'JetBrains Mono', monospace;
 }
 
 .status-dot {
@@ -1453,6 +1610,69 @@ body {
   color: var(--text-muted);
   margin-top: var(--space-md);
   font-style: italic;
+}
+
+/* Update Status */
+.update-status-box {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 12px;
+  margin-bottom: 12px;
+  background: var(--bg-deep);
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+}
+
+.update-status-content {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+}
+
+.update-checking {
+  color: var(--neon-yellow);
+}
+
+.spin-icon {
+  display: inline-block;
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+.update-latest {
+  color: var(--neon-green);
+}
+
+.update-available {
+  color: var(--neon-cyan);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.new-badge {
+  padding: 2px 6px;
+  background: var(--neon-pink);
+  color: var(--bg-deep);
+  font-size: 9px;
+  font-weight: 700;
+  border-radius: 2px;
+  animation: pulse 2s ease-in-out infinite;
+}
+
+.update-error {
+  color: var(--neon-red);
+}
+
+.cyber-btn.small {
+  padding: 4px 10px;
+  font-size: 10px;
 }
 
 /* Modal */
