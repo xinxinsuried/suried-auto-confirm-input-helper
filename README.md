@@ -112,4 +112,4 @@ pnpm run generate-icons
 
 ## 📄 License
 
-MIT License
+MIT License. See [LICENSE](LICENSE).

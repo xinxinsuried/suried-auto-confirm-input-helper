@@ -1,13 +1,24 @@
 import type { AppSettings, TemplateRule } from '@/types/template'
 import { SETTINGS_KEY, STORAGE_KEY, defaultSettings, defaultTemplates } from '@/types/template'
 
+const LOG_PREFIX = '[Auto Confirm Helper]'
+function logDebug(message: string, data?: unknown): void {
+  if (data !== undefined) {
+    console.log(LOG_PREFIX, message, data)
+  } else {
+    console.log(LOG_PREFIX, message)
+  }
+}
+
 // 获取模板列表
 async function getTemplates(): Promise<TemplateRule[]> {
   return new Promise((resolve) => {
     chrome.storage.sync.get([STORAGE_KEY], (result) => {
       if (result[STORAGE_KEY]) {
+        logDebug('Loaded templates from storage', { count: (result[STORAGE_KEY] as TemplateRule[]).length })
         resolve(result[STORAGE_KEY] as TemplateRule[])
       } else {
+        logDebug('No templates found in storage, using defaults', { count: defaultTemplates.length })
         resolve(defaultTemplates)
       }
     })
@@ -19,8 +30,10 @@ async function getSettings(): Promise<AppSettings> {
   return new Promise((resolve) => {
     chrome.storage.sync.get([SETTINGS_KEY], (result) => {
       if (result[SETTINGS_KEY]) {
+        logDebug('Loaded settings from storage', result[SETTINGS_KEY] as AppSettings)
         resolve(result[SETTINGS_KEY] as AppSettings)
       } else {
+        logDebug('No settings found in storage, using defaults', defaultSettings)
         resolve(defaultSettings)
       }
     })
@@ -38,23 +51,35 @@ function matchUrlPattern(url: string, pattern: string): boolean {
 }
 
 // 检查页面是否包含指定文本
+function normalizeText(text: string): string {
+  return text.replace(/\s+/g, '').trim()
+}
+
 function containsText(texts?: string[]): boolean {
   if (!texts || texts.length === 0) return true
-  const pageText = document.body.innerText
-  return texts.every((text) => pageText.includes(text))
+  const pageText = document.body.innerText || document.body.textContent || ''
+  const normalizedPage = normalizeText(pageText)
+  const result = texts.every((text) => normalizedPage.includes(normalizeText(text)))
+  logDebug('Text match result', { texts, result })
+  return result
 }
 
 // 查找匹配的输入框
-function findMatchingInput(template: TemplateRule): HTMLInputElement | null {
+function findMatchingInput(template: TemplateRule): HTMLElement | null {
   const { matcher } = template
-  const inputs = document.querySelectorAll('input[type="text"], input:not([type])')
+  const inputs = document.querySelectorAll(
+    'input[type="text"], input:not([type]), input[type="search"], textarea, [contenteditable="true"]'
+  )
+
+  logDebug('Scanning inputs', { total: inputs.length, template: template.name })
 
   for (const input of inputs) {
-    const inputEl = input as HTMLInputElement
+    const inputEl = input as HTMLElement
     
     // 检查placeholder匹配
-    if (matcher.placeholderPattern) {
-      if (!inputEl.placeholder.includes(matcher.placeholderPattern)) {
+    if (matcher.placeholderPattern && inputEl instanceof HTMLInputElement) {
+      const placeholder = inputEl.placeholder || ''
+      if (!normalizeText(placeholder).includes(normalizeText(matcher.placeholderPattern))) {
         continue
       }
     }
@@ -84,6 +109,7 @@ function findMatchingInput(template: TemplateRule): HTMLInputElement | null {
       }
     }
 
+    logDebug('Found matching input for template', { template: template.name })
     // 如果所有条件都满足，返回这个输入框
     return inputEl
   }
@@ -91,11 +117,19 @@ function findMatchingInput(template: TemplateRule): HTMLInputElement | null {
   return null
 }
 
-function isFillableInput(input: HTMLInputElement): boolean {
-  if (input.disabled || input.readOnly) return false
-  const type = (input.getAttribute('type') || 'text').toLowerCase()
-  if (type === 'password' || type === 'email' || type === 'number') return false
-  return true
+function isFillableInput(input: HTMLElement): boolean {
+  if (input instanceof HTMLInputElement) {
+    if (input.disabled || input.readOnly) return false
+    const type = (input.getAttribute('type') || 'text').toLowerCase()
+    if (type === 'password' || type === 'email' || type === 'number') return false
+    return true
+  }
+  if (input instanceof HTMLTextAreaElement) {
+    if (input.disabled || input.readOnly) return false
+    return true
+  }
+  if (input.getAttribute('contenteditable') === 'true') return true
+  return false
 }
 
 function findDialogContainer(input: HTMLElement): HTMLElement | null {
@@ -113,7 +147,8 @@ function findDialogContainer(input: HTMLElement): HTMLElement | null {
   return input.closest(dialogSelectors.join(','))
 }
 
-function getLabelText(input: HTMLInputElement): string | null {
+function getLabelText(input: HTMLElement): string | null {
+  if (!(input instanceof HTMLInputElement)) return null
   if (input.getAttribute('aria-label')) {
     return input.getAttribute('aria-label')
   }
@@ -159,19 +194,23 @@ function extractFromDialogPattern(text: string): string | null {
   return null
 }
 
-function pickDialogText(input: HTMLInputElement): string {
+function pickDialogText(input: HTMLElement): string {
   const container = findDialogContainer(input)
   const text = container?.innerText || document.body.innerText
   return text || ''
 }
 
-function tryGenericEngines(input: HTMLInputElement, settings: AppSettings): string | null {
+function tryGenericEngines(input: HTMLElement, settings: AppSettings): string | null {
   if (!isFillableInput(input)) return null
-  if (input.value) return null
+  if (input instanceof HTMLInputElement || input instanceof HTMLTextAreaElement) {
+    if (input.value) return null
+  } else if (input.textContent && input.textContent.trim()) {
+    return null
+  }
 
-  if (settings.genericEngines.placeholder && input.placeholder?.trim()) {
-    const value = input.placeholder.trim()
-    if (value.length >= 2) return value
+  if (settings.genericEngines.placeholder && input instanceof HTMLInputElement) {
+    const placeholder = input.placeholder?.trim()
+    if (placeholder && placeholder.length >= 2) return placeholder
   }
 
   if (settings.genericEngines.label) {
@@ -198,9 +237,13 @@ function tryGenericEngines(input: HTMLInputElement, settings: AppSettings): stri
 }
 
 // 填写输入框
-function fillInput(input: HTMLInputElement, value: string): void {
-  // 设置值
-  input.value = value
+function fillInput(input: HTMLElement, value: string): void {
+  logDebug('Filling input', { value })
+  if (input instanceof HTMLInputElement || input instanceof HTMLTextAreaElement) {
+    input.value = value
+  } else {
+    input.textContent = value
+  }
   
   // 触发各种事件以确保Vue/React等框架能够捕获到变化
   input.dispatchEvent(new Event('input', { bubbles: true }))
@@ -221,6 +264,7 @@ function fillInput(input: HTMLInputElement, value: string): void {
 async function scanAndFill(): Promise<void> {
   const [templates, settings] = await Promise.all([getTemplates(), getSettings()])
   const currentUrl = window.location.href
+  logDebug('Scan start', { url: currentUrl, templates: templates.length })
 
   for (const template of templates) {
     // 跳过禁用的模板
@@ -228,45 +272,65 @@ async function scanAndFill(): Promise<void> {
 
     // 检查URL匹配
     if (template.matcher.urlPattern && !matchUrlPattern(currentUrl, template.matcher.urlPattern)) {
+      logDebug('Template URL mismatch', { template: template.name, pattern: template.matcher.urlPattern })
       continue
     }
 
     // 检查页面文本
     if (!containsText(template.matcher.containsText)) {
+      logDebug('Template text mismatch', { template: template.name, texts: template.matcher.containsText })
       continue
     }
 
     // 查找匹配的输入框
     const input = findMatchingInput(template)
-    if (input && !input.value && isFillableInput(input)) {
+    if (input && isFillableInput(input)) {
       // 只有当输入框为空时才填写
       const value = template.fillValue
       if (value) {
         fillInput(input, value)
-        console.log(`[Auto Confirm Helper] 匹配模板: ${template.name}`)
+        logDebug('Template filled', { template: template.name })
         return
       }
       // 模板填充值为空时，尝试通用引擎
       const genericValue = tryGenericEngines(input, settings)
       if (genericValue) {
         fillInput(input, genericValue)
-        console.log(`[Auto Confirm Helper] 通用引擎匹配: ${template.name}`)
+        logDebug('Generic engine used for template', { template: template.name })
         return
       }
     }
   }
 
   // 如果没有模板匹配，尝试通用引擎
-  const inputs = document.querySelectorAll('input[type="text"], input:not([type])')
+  const inputs = document.querySelectorAll(
+    'input[type="text"], input:not([type]), input[type="search"], textarea, [contenteditable="true"]'
+  )
   for (const input of inputs) {
-    const inputEl = input as HTMLInputElement
+    const inputEl = input as HTMLElement
     const genericValue = tryGenericEngines(inputEl, settings)
     if (genericValue) {
       fillInput(inputEl, genericValue)
-      console.log('[Auto Confirm Helper] 通用引擎自动匹配')
+      logDebug('Generic engine auto matched')
       return
     }
   }
+
+  logDebug('Scan complete: no match')
+}
+
+let retryTimer: number | null = null
+function scheduleRetry(): void {
+  if (retryTimer) return
+  let count = 0
+  retryTimer = window.setInterval(() => {
+    count += 1
+    scanAndFill()
+    if (count >= 5 && retryTimer) {
+      clearInterval(retryTimer)
+      retryTimer = null
+    }
+  }, 400)
 }
 
 // 使用MutationObserver监听DOM变化
@@ -277,6 +341,7 @@ function observeDOM(): void {
       if (mutation.addedNodes.length > 0) {
         // 延迟执行，等待DOM完全渲染
         setTimeout(scanAndFill, 300)
+        scheduleRetry()
         break
       }
     }
@@ -291,15 +356,21 @@ function observeDOM(): void {
 // 监听来自popup的消息
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (message.action === 'triggerFill') {
+    logDebug('Manual trigger received')
     scanAndFill()
     sendResponse({ success: true })
+  }
+  if (message.action === 'pageLoaded') {
+    logDebug('Page loaded trigger received')
+    scanAndFill()
+    scheduleRetry()
   }
   return true
 })
 
 // 初始化
 function init(): void {
-  console.log('[Auto Confirm Helper] Content script loaded')
+  logDebug('Content script loaded')
   
   // 首次扫描
   setTimeout(scanAndFill, 500)
