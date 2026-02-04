@@ -64,57 +64,116 @@ function containsText(texts?: string[]): boolean {
   return result
 }
 
-// 查找匹配的输入框
+// 查找匹配的输入框 - 增强版，支持腾讯云等复杂页面
 function findMatchingInput(template: TemplateRule): HTMLElement | null {
   const { matcher } = template
-  const inputs = document.querySelectorAll(
-    'input[type="text"], input:not([type]), input[type="search"], textarea, [contenteditable="true"]'
-  )
+  
+  // 扩展的输入框选择器
+  const inputSelectors = [
+    'input[type="text"]',
+    'input:not([type])',
+    'input[type="search"]',
+    'textarea',
+    '[contenteditable="true"]',
+    // 腾讯云特定
+    '.app-cam-input input',
+    '.tea-input__inner',
+    '.cds-input input',
+    '[class*="input"] input',
+    '[class*="Input"] input',
+  ]
+  
+  const allInputs: HTMLElement[] = []
+  const seen = new WeakSet<Element>()
+  
+  // 查找所有输入框
+  for (const selector of inputSelectors) {
+    try {
+      const elements = document.querySelectorAll(selector)
+      for (const el of elements) {
+        if (!seen.has(el) && el instanceof HTMLElement) {
+          seen.add(el)
+          allInputs.push(el)
+        }
+      }
+      // 也查找 Shadow DOM
+      const shadowElements = queryShadowRoot(document.body, selector)
+      for (const el of shadowElements) {
+        if (!seen.has(el) && el instanceof HTMLElement) {
+          seen.add(el)
+          allInputs.push(el)
+        }
+      }
+    } catch {
+      // ignore
+    }
+  }
 
-  logDebug('Scanning inputs', { total: inputs.length, template: template.name })
+  logDebug('Scanning inputs', { total: allInputs.length, template: template.name })
 
-  for (const input of inputs) {
-    const inputEl = input as HTMLElement
+  // 判断模板是否有任何匹配条件
+  const hasAnyMatcher = !!(matcher.placeholderPattern || matcher.inputClassPattern || matcher.containerClassPattern)
+
+  for (const inputEl of allInputs) {
+    // 检查是否可见
+    if (!isElementVisible(inputEl)) continue
     
     // 检查placeholder匹配
-    if (matcher.placeholderPattern && inputEl instanceof HTMLInputElement) {
-      const placeholder = inputEl.placeholder || ''
+    if (matcher.placeholderPattern) {
+      const placeholder = inputEl instanceof HTMLInputElement ? inputEl.placeholder : inputEl.getAttribute('placeholder') || ''
       if (!normalizeText(placeholder).includes(normalizeText(matcher.placeholderPattern))) {
         continue
       }
+      logDebug('Placeholder matched', { placeholder, pattern: matcher.placeholderPattern })
     }
 
     // 检查input class匹配
     if (matcher.inputClassPattern) {
-      if (!inputEl.className.includes(matcher.inputClassPattern)) {
+      const className = inputEl.className || ''
+      if (!className.includes(matcher.inputClassPattern)) {
         continue
       }
+      logDebug('Input class matched', { className, pattern: matcher.inputClassPattern })
     }
 
     // 检查容器class匹配
     if (matcher.containerClassPattern) {
-      const container = inputEl.closest(`.${matcher.containerClassPattern}`)
-      if (!container) {
-        // 尝试查找父元素中包含该class的元素
-        let parent = inputEl.parentElement
-        let found = false
-        while (parent) {
-          if (parent.className && parent.className.includes(matcher.containerClassPattern)) {
-            found = true
-            break
-          }
-          parent = parent.parentElement
+      let found = false
+      let parent = inputEl.parentElement
+      while (parent && parent !== document.body) {
+        const className = parent.className || ''
+        if (typeof className === 'string' && className.includes(matcher.containerClassPattern)) {
+          found = true
+          break
         }
-        if (!found) continue
+        parent = parent.parentElement
       }
+      if (!found) continue
+      logDebug('Container class matched', { pattern: matcher.containerClassPattern })
+    }
+
+    // 如果模板没有任何输入框匹配条件，只依赖 URL 和 containsText
+    // 则需要该输入框在对话框内
+    if (!hasAnyMatcher) {
+      const dialog = findDialogContainer(inputEl)
+      if (!dialog) continue
     }
 
     logDebug('Found matching input for template', { template: template.name })
-    // 如果所有条件都满足，返回这个输入框
     return inputEl
   }
 
   return null
+}
+
+// 检查元素是否可见
+function isElementVisible(element: HTMLElement): boolean {
+  const style = window.getComputedStyle(element)
+  if (style.display === 'none' || style.visibility === 'hidden' || style.opacity === '0') {
+    return false
+  }
+  const rect = element.getBoundingClientRect()
+  return rect.width > 0 && rect.height > 0
 }
 
 function isFillableInput(input: HTMLElement): boolean {
@@ -194,46 +253,155 @@ function extractFromDialogPattern(text: string): string | null {
   return null
 }
 
-function pickDialogText(input: HTMLElement): string {
-  const container = findDialogContainer(input)
-  const text = container?.innerText || document.body.innerText
-  return text || ''
+// 检测是否是确认对话框（需要用户输入特定内容才能继续的对话框）
+function isConfirmationDialog(dialogText: string): boolean {
+  const confirmPatterns = [
+    /请输入[""'"「『]?(.+?)[""'"」』]?(?:以|进行|来)?(?:确认|删除|继续)/,
+    /输入[""'"「『](.+?)[""'"」』](?:以|进行|来)?(?:确认|删除|继续)/,
+    /type\s+[""']?(.+?)[""']?\s+to\s+(?:confirm|delete|continue)/i,
+    /enter\s+[""']?(.+?)[""']?\s+to\s+(?:confirm|delete|continue)/i,
+    /确认删除/,
+    /请填写.*(?:确认|验证)/,
+    /无法恢复/,
+    /不可逆/,
+    /永久删除/,
+    /permanently\s+delete/i,
+    /cannot\s+be\s+undone/i,
+    /this\s+action\s+is\s+irreversible/i,
+  ]
+  
+  return confirmPatterns.some(pattern => pattern.test(dialogText))
+}
+
+// 从确认对话框文本中提取需要输入的值
+function extractConfirmValue(dialogText: string): string | null {
+  // 中文模式：请输入"xxx"以确认删除
+  const cnPatterns = [
+    /请输入[""'"「『](.+?)[""'"」』]/,
+    /输入[""'"「『](.+?)[""'"」』]/,
+    /请填写[""'"「『](.+?)[""'"」』]/,
+    /填写[""'"「『](.+?)[""'"」』]/,
+  ]
+  
+  for (const pattern of cnPatterns) {
+    const match = dialogText.match(pattern)
+    if (match && match[1]) {
+      return match[1].trim()
+    }
+  }
+  
+  // 英文模式：type "xxx" to confirm
+  const enPatterns = [
+    /type\s+[""'](.+?)[""']\s+to/i,
+    /enter\s+[""'](.+?)[""']\s+to/i,
+    /please\s+type\s+[""']?([^""']+?)[""']?\s+to/i,
+  ]
+  
+  for (const pattern of enPatterns) {
+    const match = dialogText.match(pattern)
+    if (match && match[1]) {
+      return match[1].trim()
+    }
+  }
+  
+  return null
 }
 
 function tryGenericEngines(input: HTMLElement, settings: AppSettings): string | null {
   if (!isFillableInput(input)) return null
+  
+  // 检查输入框是否已有值
   if (input instanceof HTMLInputElement || input instanceof HTMLTextAreaElement) {
-    if (input.value) return null
+    if (input.value && input.value.trim()) return null
   } else if (input.textContent && input.textContent.trim()) {
     return null
   }
 
-  if (settings.genericEngines.placeholder && input instanceof HTMLInputElement) {
-    const placeholder = input.placeholder?.trim()
-    if (placeholder && placeholder.length >= 2) return placeholder
+  // 首先检查是否在对话框/弹窗内
+  const dialog = findDialogContainer(input)
+  if (!dialog) {
+    logDebug('Generic engine skipped: not in dialog')
+    return null
   }
 
+  const dialogText = dialog.innerText || dialog.textContent || ''
+  
+  // 检查是否是确认对话框
+  if (!isConfirmationDialog(dialogText)) {
+    logDebug('Generic engine skipped: not a confirmation dialog')
+    return null
+  }
+  
+  logDebug('Confirmation dialog detected', { textLength: dialogText.length })
+
+  // 优先尝试从对话框文本中提取需要输入的值
+  const confirmValue = extractConfirmValue(dialogText)
+  if (confirmValue) {
+    logDebug('Extracted confirm value from dialog', { value: confirmValue })
+    return confirmValue
+  }
+
+  // 其次检查 placeholder（只有在确认对话框中才使用）
+  if (settings.genericEngines.placeholder && input instanceof HTMLInputElement) {
+    const placeholder = input.placeholder?.trim()
+    // placeholder 需要有意义的内容，不是纯提示语
+    if (placeholder && placeholder.length >= 2 && !isGenericPlaceholder(placeholder)) {
+      logDebug('Using placeholder as confirm value', { placeholder })
+      return placeholder
+    }
+  }
+
+  // label 提取
   if (settings.genericEngines.label) {
     const label = getLabelText(input)
     if (label) {
       const extracted = extractQuotedText(label) || extractFromDialogPattern(label)
-      if (extracted) return extracted
+      if (extracted) {
+        logDebug('Extracted from label', { extracted })
+        return extracted
+      }
     }
   }
 
-  const dialogText = pickDialogText(input)
-
+  // 引号内容提取
   if (settings.genericEngines.quotedText) {
     const quoted = extractQuotedText(dialogText)
-    if (quoted) return quoted
+    if (quoted && quoted.length >= 2 && quoted.length <= 100) {
+      logDebug('Extracted quoted text', { quoted })
+      return quoted
+    }
   }
 
+  // "请输入/请填写"模式提取
   if (settings.genericEngines.dialogPattern) {
     const extracted = extractFromDialogPattern(dialogText)
-    if (extracted) return extracted
+    if (extracted && extracted.length >= 2 && extracted.length <= 100) {
+      logDebug('Extracted from dialog pattern', { extracted })
+      return extracted
+    }
   }
 
   return null
+}
+
+// 检测是否是通用的占位符提示（不应作为填写值）
+function isGenericPlaceholder(placeholder: string): boolean {
+  const genericPatterns = [
+    /^请输入$/,
+    /^请填写$/,
+    /^请搜索$/,
+    /^搜索$/,
+    /^输入$/,
+    /^search$/i,
+    /^enter$/i,
+    /^type here$/i,
+    /^input$/i,
+    /^please enter$/i,
+    /^请输入.*名称$/,
+    /^请输入.*内容$/,
+  ]
+  
+  return genericPatterns.some(pattern => pattern.test(placeholder.trim()))
 }
 
 // 模拟用户输入 - 使用多种策略确保兼容各种框架

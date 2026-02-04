@@ -972,21 +972,21 @@ body {
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  padding: var(--space-xl) * 2;
+  padding: 48px 24px;
   text-align: center;
 }
 
 .empty-icon {
   font-size: 48px;
   color: var(--text-muted);
-  margin-bottom: var(--space-lg);
+  margin-bottom: 16px;
   opacity: 0.5;
 }
 
 .empty-text {
   color: var(--text-secondary);
   font-size: 12px;
-  margin-bottom: var(--space-lg);
+  margin-bottom: 16px;
 }
 
 /* Template List */

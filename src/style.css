@@ -1,13 +1,11 @@
-@import "tailwindcss";
-
-@plugin "daisyui";
-
-:root {
-  font-family: Inter, system-ui, Avenir, Helvetica, Arial, sans-serif;
+/* 基础样式重置 */
+*, *::before, *::after {
+  box-sizing: border-box;
 }
 
 body {
   margin: 0;
-  min-width: 400px;
-  min-height: 400px;
+  padding: 0;
+  min-width: 460px;
+  min-height: 520px;
 }
