@@ -194,14 +194,33 @@ function isFillableInput(input: HTMLElement): boolean {
 function findDialogContainer(input: HTMLElement): HTMLElement | null {
   const dialogSelectors = [
     '[role="dialog"]',
+    '[role="alertdialog"]',
     '[aria-modal="true"]',
     '.dialog',
     '.modal',
+    // GitHub
+    '.Overlay',
+    '.Overlay-footer',
+    '[data-view-component="true"].Box-overlay',
+    // Ant Design
     '.ant-modal',
+    '.ant-modal-content',
+    '.ant-drawer',
+    '.ant-popconfirm',
+    // Element UI
     '.el-dialog',
+    '.el-message-box',
+    // iView
     '.ivu-modal',
+    // Arco Design
     '.arco-modal',
+    // TDesign
     '.t-dialog',
+    // 腾讯云
+    '.tea-dialog',
+    '.tea-modal',
+    '.cds-modal',
+    '.app-cam-dialog',
   ]
   return input.closest(dialogSelectors.join(','))
 }
@@ -256,18 +275,24 @@ function extractFromDialogPattern(text: string): string | null {
 // 检测是否是确认对话框（需要用户输入特定内容才能继续的对话框）
 function isConfirmationDialog(dialogText: string): boolean {
   const confirmPatterns = [
+    // 中文模式
     /请输入[""'"「『]?(.+?)[""'"」』]?(?:以|进行|来)?(?:确认|删除|继续)/,
     /输入[""'"「『](.+?)[""'"」』](?:以|进行|来)?(?:确认|删除|继续)/,
-    /type\s+[""']?(.+?)[""']?\s+to\s+(?:confirm|delete|continue)/i,
-    /enter\s+[""']?(.+?)[""']?\s+to\s+(?:confirm|delete|continue)/i,
     /确认删除/,
     /请填写.*(?:确认|验证)/,
     /无法恢复/,
     /不可逆/,
     /永久删除/,
+    // 英文模式 - GitHub 格式: "To confirm, type "xxx" in the box below"
+    /to\s+confirm[,:]?\s+type\s+[""']/i,
+    /type\s+[""'].+?[""']\s+to\s+(?:confirm|delete|continue)/i,
+    /enter\s+[""'].+?[""']\s+to\s+(?:confirm|delete|continue)/i,
+    /type\s+.+?\s+to\s+(?:confirm|delete|continue)/i,
     /permanently\s+delete/i,
     /cannot\s+be\s+undone/i,
     /this\s+action\s+is\s+irreversible/i,
+    /delete\s+this\s+repository/i,
+    /are\s+you\s+sure/i,
   ]
   
   return confirmPatterns.some(pattern => pattern.test(dialogText))
@@ -290,17 +315,55 @@ function extractConfirmValue(dialogText: string): string | null {
     }
   }
   
-  // 英文模式：type "xxx" to confirm
+  // 英文模式 - 多种格式支持
   const enPatterns = [
-    /type\s+[""'](.+?)[""']\s+to/i,
-    /enter\s+[""'](.+?)[""']\s+to/i,
-    /please\s+type\s+[""']?([^""']+?)[""']?\s+to/i,
+    // GitHub 格式: "To confirm, type "xxx" in the box below"
+    /to\s+confirm[,:]?\s+type\s+[""'](.+?)[""']/i,
+    // 标准格式: "type "xxx" to confirm"
+    /type\s+[""'](.+?)[""']\s+(?:to|in)/i,
+    /enter\s+[""'](.+?)[""']\s+(?:to|in)/i,
+    /please\s+type\s+[""'](.+?)[""']/i,
   ]
   
   for (const pattern of enPatterns) {
     const match = dialogText.match(pattern)
     if (match && match[1]) {
       return match[1].trim()
+    }
+  }
+  
+  return null
+}
+
+// 尝试从输入框的相关元素获取确认值（GitHub 特殊处理）
+function extractValueFromInputContext(input: HTMLElement): string | null {
+  // GitHub: 从 data-repo-nwo 属性获取
+  if (input instanceof HTMLInputElement) {
+    const repoNwo = input.getAttribute('data-repo-nwo')
+    if (repoNwo) {
+      logDebug('Found repo-nwo attribute', { value: repoNwo })
+      return repoNwo
+    }
+  }
+  
+  // 查找相邻的隐藏 input 中的 verify 值
+  const container = input.closest('form, .Overlay-footer, [role="dialog"], .modal, .dialog')
+  if (container) {
+    const hiddenInput = container.querySelector('input[name="verify"], input[type="hidden"][value]') as HTMLInputElement
+    if (hiddenInput && hiddenInput.value) {
+      logDebug('Found verify hidden input', { value: hiddenInput.value })
+      return hiddenInput.value
+    }
+  }
+  
+  // 查找关联的 label 文本
+  const labelFor = input.id ? document.querySelector(`label[for="${input.id}"]`) : null
+  if (labelFor) {
+    const labelText = labelFor.textContent || ''
+    const extracted = extractConfirmValue(labelText)
+    if (extracted) {
+      logDebug('Extracted from label', { value: extracted })
+      return extracted
     }
   }
   
@@ -334,14 +397,21 @@ function tryGenericEngines(input: HTMLElement, settings: AppSettings): string | 
   
   logDebug('Confirmation dialog detected', { textLength: dialogText.length })
 
-  // 优先尝试从对话框文本中提取需要输入的值
+  // 优先尝试从输入框上下文获取值（GitHub data-repo-nwo、隐藏input等）
+  const contextValue = extractValueFromInputContext(input)
+  if (contextValue) {
+    logDebug('Extracted value from input context', { value: contextValue })
+    return contextValue
+  }
+
+  // 其次尝试从对话框文本中提取需要输入的值
   const confirmValue = extractConfirmValue(dialogText)
   if (confirmValue) {
     logDebug('Extracted confirm value from dialog', { value: confirmValue })
     return confirmValue
   }
 
-  // 其次检查 placeholder（只有在确认对话框中才使用）
+  // 检查 placeholder（只有在确认对话框中才使用）
   if (settings.genericEngines.placeholder && input instanceof HTMLInputElement) {
     const placeholder = input.placeholder?.trim()
     // placeholder 需要有意义的内容，不是纯提示语
