@@ -19,6 +19,7 @@ const editingTemplate = ref<TemplateRule | null>(null)
 const activeTab = ref<'list' | 'add' | 'settings'>('list')
 const settings = ref<AppSettings>(defaultSettings)
 const version = chrome.runtime.getManifest().version
+const contentStatus = ref<'unknown' | 'ok' | 'missing'>('unknown')
 
 // 新模板表单
 const newTemplate = ref({
@@ -139,6 +140,7 @@ async function triggerFill() {
 onMounted(() => {
   loadTemplates()
   loadSettings()
+  checkContentStatus()
 })
 
 async function handleSettingsChange() {
@@ -156,6 +158,31 @@ async function openReleases() {
 
 async function openExtensionsPage() {
   chrome.tabs.create({ url: 'chrome://extensions/' })
+}
+
+async function checkContentStatus() {
+  contentStatus.value = 'unknown'
+  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true })
+  if (!tab?.id) {
+    contentStatus.value = 'missing'
+    return
+  }
+
+  let responded = false
+  const timeout = setTimeout(() => {
+    if (!responded) contentStatus.value = 'missing'
+  }, 800)
+
+  try {
+    chrome.tabs.sendMessage(tab.id, { action: 'ping' }, (response) => {
+      responded = true
+      clearTimeout(timeout)
+      contentStatus.value = response?.ok ? 'ok' : 'missing'
+    })
+  } catch {
+    clearTimeout(timeout)
+    contentStatus.value = 'missing'
+  }
 }
 </script>
 
@@ -447,6 +474,25 @@ async function openExtensionsPage() {
           </div>
           <p class="text-xs text-gray-500 mt-2">
             更新需手动下载并在扩展管理页重新加载。
+          </p>
+        </div>
+      </div>
+
+      <div class="card bg-base-200">
+        <div class="card-body p-3">
+          <h3 class="card-title text-sm">内容脚本状态</h3>
+          <div class="text-xs">
+            <span v-if="contentStatus === 'ok'" class="text-success">✅ 已注入</span>
+            <span v-else-if="contentStatus === 'missing'" class="text-error">❌ 未注入</span>
+            <span v-else class="text-gray-500">⏳ 检测中</span>
+          </div>
+          <div class="mt-2 flex gap-2">
+            <button class="btn btn-outline btn-sm" @click="checkContentStatus">
+              🔍 重新检测
+            </button>
+          </div>
+          <p class="text-xs text-gray-500 mt-2">
+            若未注入，请确保加载的是 dist 目录并刷新页面。
           </p>
         </div>
       </div>

@@ -365,6 +365,9 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     scanAndFill()
     scheduleRetry()
   }
+  if (message.action === 'ping') {
+    sendResponse({ ok: true })
+  }
   return true
 })
 

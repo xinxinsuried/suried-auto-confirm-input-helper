@@ -82,8 +82,7 @@ pnpm run dev
 # 构建
 pnpm run build
 
-# 生成图标
-pnpm run generate-icons
+# 构建产物在 dist 目录，扩展需从 dist 加载
 ```
 
 ## 📁 项目结构
