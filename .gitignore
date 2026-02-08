@@ -34,3 +34,4 @@ dist-ssr
 *.crx
 *.pem
 *.zip
+package-lock.json
