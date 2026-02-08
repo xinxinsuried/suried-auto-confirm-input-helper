@@ -244,6 +244,9 @@ function findDialogContainer(input: HTMLElement): HTMLElement | null {
     // AWS
     '.awsui-modal',
     '[class*="awsui_dialog"]',
+    // Cloudflare
+    '[class*="cf-modal"]',
+    '[class*="cds-modal"]',
   ]
   return input.closest(dialogSelectors.join(','))
 }
@@ -871,6 +874,9 @@ function isDialogElement(element: Element): boolean {
     // AWS
     '.awsui-modal',
     '[class*="awsui_dialog"]',
+    // Cloudflare
+    '[class*="cf-modal"]',
+    '[class*="cds-modal"]',
     // 通用模糊匹配
     '[class*="dialog"]',
     '[class*="modal"]',

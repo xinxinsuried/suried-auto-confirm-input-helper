@@ -159,6 +159,18 @@ export const defaultTemplates: TemplateRule[] = [
     createdAt: Date.now(),
     updatedAt: Date.now(),
   },
+  {
+    id: 'cloudflare-delete-confirm',
+    name: 'Cloudflare-删除资源确认',
+    description: 'Cloudflare控制台删除资源时的确认输入框',
+    enabled: true,
+    matcher: {
+      urlPattern: '*dash.cloudflare.com*',
+    },
+    fillValue: '', // 动态提取，由通用引擎处理
+    createdAt: Date.now(),
+    updatedAt: Date.now(),
+  },
 ]
 
 // 存储键名
