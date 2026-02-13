@@ -1,12 +1,14 @@
 import type { AppSettings, TemplateRule } from '@/types/template'
 import { SETTINGS_KEY, STORAGE_KEY, defaultSettings, defaultTemplates } from '@/types/template'
 
+const DEBUG = false
 const LOG_PREFIX = '[Auto Confirm Helper]'
-function logDebug(message: string, data?: unknown): void {
-  if (data !== undefined) {
-    console.log(LOG_PREFIX, message, data)
+function logDebug(_message: string, _data?: unknown): void {
+  if (!DEBUG) return
+  if (_data !== undefined) {
+    console.log(LOG_PREFIX, _message, _data)
   } else {
-    console.log(LOG_PREFIX, message)
+    console.log(LOG_PREFIX, _message)
   }
 }
 
@@ -692,7 +694,7 @@ function fillInput(input: HTMLElement, value: string): void {
     input.style.outline = originalOutline
   }, 1000)
 
-  console.log(`[Auto Confirm Helper] 已填写: ${value}`)
+  logDebug(`已填写: ${value}`)
 }
 
 // 主函数：扫描并填写

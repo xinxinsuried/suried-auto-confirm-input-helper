@@ -1,6 +1,6 @@
 // Background service worker
 chrome.runtime.onInstalled.addListener(() => {
-  console.log('[Auto Confirm Helper] Extension installed')
+  // Extension installed
 })
 
 // 监听来自content script的消息
