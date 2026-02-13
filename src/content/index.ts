@@ -81,6 +81,17 @@ function findMatchingInput(template: TemplateRule): HTMLElement | null {
     '.app-cam-input input',
     '.tea-input__inner',
     '.cds-input input',
+    // 华为云特定
+    '.tiny-input__inner',
+    '.hwc-input input',
+    // 火山引擎
+    '.semi-input input',
+    '.arco-input',
+    // 百度智能云
+    '.bce-input input',
+    // AWS
+    '[class*="awsui_input"] input',
+    // 通用
     '[class*="input"] input',
     '[class*="Input"] input',
   ]
@@ -223,6 +234,21 @@ function findDialogContainer(input: HTMLElement): HTMLElement | null {
     '.tea-modal',
     '.cds-modal',
     '.app-cam-dialog',
+    // 华为云
+    '.cdk-overlay-container',
+    '.hwc-dialog',
+    '.tiny-modal',
+    // 火山引擎
+    '.semi-modal',
+    '.arco-modal',
+    // 百度智能云
+    '.bce-dialog',
+    // AWS
+    '.awsui-modal',
+    '[class*="awsui_dialog"]',
+    // Cloudflare
+    '[class*="cf-modal"]',
+    '[class*="cds-modal"]',
   ]
   return input.closest(dialogSelectors.join(','))
 }
@@ -285,6 +311,10 @@ function isConfirmationDialog(dialogText: string): boolean {
     /无法恢复/,
     /不可逆/,
     /永久删除/,
+    /彻底删除/,
+    /销毁/,
+    /请输入.*以确认/,
+    /输入.*进行确认/,
     // 英文模式 - GitHub 格式: "To confirm, type "xxx" in the box below"
     /to\s+confirm[,:]?\s+type\s+[""']/i,
     /type\s+[""'].+?[""']\s+to\s+(?:confirm|delete|continue)/i,
@@ -295,6 +325,7 @@ function isConfirmationDialog(dialogText: string): boolean {
     /this\s+action\s+is\s+irreversible/i,
     /delete\s+this\s+repository/i,
     /are\s+you\s+sure/i,
+    /confirm\s+(?:deletion|removal|destroy)/i,
   ]
   
   return confirmPatterns.some(pattern => pattern.test(dialogText))
@@ -308,6 +339,9 @@ function extractConfirmValue(dialogText: string): string | null {
     /输入[""'"「『](.+?)[""'"」』]/,
     /请填写[""'"「『](.+?)[""'"」』]/,
     /填写[""'"「『](.+?)[""'"」』]/,
+    // 无引号模式: "请输入 永久删除 以确认"
+    /请输入\s+(.+?)\s+(?:以|进行|来)(?:确认|删除|继续)/,
+    /输入\s+(.+?)\s+(?:以|进行|来)(?:确认|删除|继续)/,
   ]
   
   for (const pattern of cnPatterns) {
@@ -831,6 +865,21 @@ function isDialogElement(element: Element): boolean {
     '.tea-modal',
     '.cds-modal',
     '.confirm-dialog',
+    // 华为云
+    '.cdk-overlay-container',
+    '.hwc-dialog',
+    '.tiny-modal',
+    // 火山引擎
+    '.semi-modal',
+    // 百度智能云
+    '.bce-dialog',
+    // AWS
+    '.awsui-modal',
+    '[class*="awsui_dialog"]',
+    // Cloudflare
+    '[class*="cf-modal"]',
+    '[class*="cds-modal"]',
+    // 通用模糊匹配
     '[class*="dialog"]',
     '[class*="modal"]',
     '[class*="Dialog"]',

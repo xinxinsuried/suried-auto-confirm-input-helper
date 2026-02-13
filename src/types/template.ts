@@ -68,6 +68,20 @@ export const defaultTemplates: TemplateRule[] = [
     updatedAt: Date.now(),
   },
   {
+    id: 'tencent-cloud-cos-delete-bucket',
+    name: '腾讯云COS-删除存储桶确认',
+    description: '腾讯云对象存储COS删除存储桶时的确认输入框',
+    enabled: true,
+    matcher: {
+      urlPattern: '*cloud.tencent.com*',
+      containsText: ['永久删除'],
+      placeholderPattern: '永久删除',
+    },
+    fillValue: '永久删除',
+    createdAt: Date.now(),
+    updatedAt: Date.now(),
+  },
+  {
     id: 'aliyun-delete-confirm',
     name: '阿里云-删除确认',
     description: '阿里云控制台删除资源确认',
@@ -81,6 +95,45 @@ export const defaultTemplates: TemplateRule[] = [
     updatedAt: Date.now(),
   },
   {
+    id: 'huaweicloud-delete-confirm',
+    name: '华为云-删除资源确认',
+    description: '华为云控制台删除资源时的确认输入框',
+    enabled: true,
+    matcher: {
+      urlPattern: '*huaweicloud.com*',
+      containsText: ['永久删除'],
+    },
+    fillValue: '', // 动态提取，由通用引擎处理
+    createdAt: Date.now(),
+    updatedAt: Date.now(),
+  },
+  {
+    id: 'volcengine-delete-confirm',
+    name: '火山引擎-删除资源确认',
+    description: '火山引擎控制台删除资源时的确认输入框',
+    enabled: true,
+    matcher: {
+      urlPattern: '*volcengine.com*',
+      containsText: ['确认删除'],
+    },
+    fillValue: '', // 动态提取，由通用引擎处理
+    createdAt: Date.now(),
+    updatedAt: Date.now(),
+  },
+  {
+    id: 'baiducloud-delete-confirm',
+    name: '百度智能云-删除资源确认',
+    description: '百度智能云控制台删除资源时的确认输入框',
+    enabled: true,
+    matcher: {
+      urlPattern: '*bce.baidu.com*',
+      containsText: ['确认删除'],
+    },
+    fillValue: '', // 动态提取，由通用引擎处理
+    createdAt: Date.now(),
+    updatedAt: Date.now(),
+  },
+  {
     id: 'github-delete-repo',
     name: 'GitHub-删除仓库确认',
     description: 'GitHub删除仓库时需要输入仓库名',
@@ -90,6 +143,31 @@ export const defaultTemplates: TemplateRule[] = [
       containsText: ['delete this repository', 'please type'],
     },
     fillValue: '', // 需要动态获取仓库名
+    createdAt: Date.now(),
+    updatedAt: Date.now(),
+  },
+  {
+    id: 'aws-delete-confirm',
+    name: 'AWS-删除资源确认',
+    description: 'AWS控制台删除资源时的确认输入框',
+    enabled: true,
+    matcher: {
+      urlPattern: '*aws.amazon.com*',
+      containsText: ['permanently delete', 'confirm'],
+    },
+    fillValue: '', // 动态提取，由通用引擎处理
+    createdAt: Date.now(),
+    updatedAt: Date.now(),
+  },
+  {
+    id: 'cloudflare-delete-confirm',
+    name: 'Cloudflare-删除资源确认',
+    description: 'Cloudflare控制台删除资源时的确认输入框',
+    enabled: true,
+    matcher: {
+      urlPattern: '*dash.cloudflare.com*',
+    },
+    fillValue: '', // 动态提取，由通用引擎处理
     createdAt: Date.now(),
     updatedAt: Date.now(),
   },
